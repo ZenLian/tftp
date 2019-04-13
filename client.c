@@ -48,7 +48,7 @@ void do_get(char *remotefile, char *localfile)
     struct timeval timeout;
     struct sockaddr_in connect_addr;
     socklen_t socklen;
-    size_t len;
+    int len;
     unsigned short block = 1;
     FILE *fp;
     fd_set selectfd;
@@ -121,7 +121,7 @@ void do_put(char *localfile, char *remotefile)
     struct timeval timeout;
     struct sockaddr_in connect_addr;
     socklen_t socklen;
-    size_t len;
+    int len;
     unsigned short block = 0;
     FILE *fp;
     fd_set selectfd;
