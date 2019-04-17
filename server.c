@@ -162,7 +162,91 @@ rrq_end:
 
 static void handle_wrq(int sockfd, struct tftpreq *request)
 {
+    struct tftphdr *req_hdr = (struct tftphdr *)(request->packet);
+    char fullpath[256];
+    char *rpath = req_hdr->th_stuff;
+    char *mode  = rpath + strlen(rpath) + 1;
+    char snd_pkt[PACKET_BUF_SIZE], rcv_pkt[PACKET_BUF_SIZE];
+    struct tftphdr* snd_hdr = (struct tftphdr *)snd_pkt;
+    struct tftphdr* rcv_hdr = (struct tftphdr *)rcv_pkt;
+    struct timeval timeout;
+    FILE *fp;
+    int write_len, snd_len, rcv_len;
+    unsigned short block = 0;
+    int last = 0, resend = 0;
+    int ret;
+    fd_set selectfd;
 
+    if (strncasecmp(mode, "netascii", 8) && strncasecmp(mode, "octet", 5)) {
+        printf("mode not supported!\n");
+        //TODO: send error
+        return;
+    }
+
+    // build fullpath
+    //build_path(rpath, fullpath, 256);
+    strcpy(fullpath, root);
+    if (rpath[0] != '/')
+        strcat(fullpath, "/");
+    strcat(fullpath, rpath);
+
+    // open file for write
+    if ((fp = fopen(fullpath, "w")) == NULL) {
+        printf("cannot open or create file: %s\n", fullpath);
+        //TODO: send EACCESS
+        return;
+    }
+
+    // send ACK and wait for DATA
+    while (1) {
+        // send ACK
+        memset(snd_pkt, 0, PACKET_BUF_SIZE);
+        snd_hdr->th_opcode = htons(ACK);
+        snd_hdr->th_block  = htons(block);
+        snd_len = 4;
+        block++;
+
+        if (send(sockfd, snd_pkt, snd_len, 0) < 0) {
+            printf("error: send ACK: block %u\n", block);
+            goto wrq_end;
+        }
+
+        // wait for DATA
+        FD_ZERO(&selectfd);
+        FD_SET(sockfd, &selectfd);
+        timeout.tv_sec  = 2;
+        timeout.tv_usec = 0;
+        ret = select(sockfd+1, &selectfd, NULL, NULL, &timeout);
+        if (ret > 0) {
+            // recv DATA
+            memset(rcv_pkt, 0, PACKET_BUF_SIZE);
+            if ((rcv_len = recv(sockfd, rcv_pkt, PACKET_BUF_SIZE, 0)) < 0) {
+                printf("error: recv DATA: block %u\n", block);
+                goto wrq_end;
+            }
+
+            if (rcv_len >= 4 && rcv_hdr->th_opcode == htons(DATA) && rcv_hdr->th_block == htons(block)) {
+                // write to localfile
+                write_len = rcv_len -4;
+                // TODO: here
+            }
+        } else if (ret == 0) {
+            // TIMEOUT: resend previous DATA
+            if (++resend > 5) {
+                printf("fail: select: wait for ACK timeout \n");
+                goto rrq_end;
+            }
+        } else {
+            printf("error: select\n");
+            goto rrq_end;
+        }
+    }
+
+rrq_end:
+    if (fclose(fp) != 0) {
+        printf("error: fclose\n");
+        return;
+    }
 }
 
 // TODO: work thread cannot call exit(3) when encountering mistake
