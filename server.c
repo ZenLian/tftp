@@ -84,7 +84,7 @@ static void handle_rrq(int sockfd, struct tftpreq *request)
     strcat(fullpath, rpath);
 
     // open file for read
-    if ((fp = fopen("fullpath", "r")) == NULL) {
+    if ((fp = fopen(fullpath, "r")) == NULL) {
         printf("file not found!\n");
         //TODO: send ENOTFOUND
         return;

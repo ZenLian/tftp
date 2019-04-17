@@ -4,7 +4,7 @@ CFLAGS=-Wall -g -lpthread
 
 PROG = tftp tftpd
 
-.PHONY=all
+.PHONY: all
 all: $(PROG)
 
 tftp: client.c
@@ -13,6 +13,6 @@ tftp: client.c
 tftpd: server.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-.PHONY=clean
+.PHONY: clean
 clean:
 	$(RM) $(PROG)
