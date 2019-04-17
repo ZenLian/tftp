@@ -53,6 +53,69 @@ static int create_socket(unsigned short port, struct sockaddr_in *peer)
     return sock;
 }
 
+static int send_ack(int sockfd, char *snd_pkt, unsigned short block)
+{
+    struct tftphdr *snd_hdr = (struct tftphdr *)snd_pkt;
+
+    snd_hdr->th_opcode = htons(ACK);
+    snd_hdr->th_block  = htons(block);
+
+    if (send(sockfd, snd_pkt, 4, 0) < 0) {
+        perror("send ACK");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int send_err(int sockfd, char *snd_pkt, short errcode, .../* char *arg */)
+{
+    struct tftphdr *snd_hdr = (struct tftphdr *)snd_pkt;
+    char *arg;
+    int len = 0;
+    va_list ap;
+
+    va_start(ap, errcode);
+    arg = va_arg(ap, char *);
+    va_end(ap);
+
+    switch (errcode) {
+        default:
+        case EUNDEF:
+            break;
+        case ENOTFOUND:
+            len = sprintf(snd_hdr->th_data, "File %s not found%c", arg, 0);
+            break;
+        case EACCESS:
+            len = sprintf(snd_hdr->th_data, "Access to %s denied%c", arg, 0);
+            break;
+        case ENOSPACE:
+            break;
+        case EBADOP:
+            len = sprintf(snd_hdr->th_data, "Unsupported TFTP operation%c", 0);
+            break;
+        case EBADID:
+            break;
+        case EEXISTS:
+            len = sprintf(snd_hdr->th_data, "File %s already exists%c", arg, 0);
+            break;
+        case ENOUSER:
+            len = sprintf(snd_hdr->th_data, "No such user%c", 0);
+            break;
+    }
+
+    snd_hdr->th_opcode = htons(ERROR);
+    snd_hdr->th_code   = htons(errcode);
+    len += 4;
+
+    if (send(sockfd, snd_pkt, len, 0) < 0) {
+        perror("send ERROR");
+        return -1;
+    }
+
+    return 0;
+}
+
 static void handle_rrq(int sockfd, struct tftpreq *request)
 {
     struct tftphdr *req_hdr = (struct tftphdr *)(request->packet);
@@ -201,15 +264,20 @@ static void handle_wrq(int sockfd, struct tftpreq *request)
     while (1) {
         // send ACK
         memset(snd_pkt, 0, PACKET_BUF_SIZE);
+        if (resend)
+            block--;
         snd_hdr->th_opcode = htons(ACK);
         snd_hdr->th_block  = htons(block);
         snd_len = 4;
-        block++;
-
         if (send(sockfd, snd_pkt, snd_len, 0) < 0) {
             printf("error: send ACK: block %u\n", block);
             goto wrq_end;
         }
+
+        if (last)
+            break;
+
+        block++;
 
         // wait for DATA
         FD_ZERO(&selectfd);
@@ -228,21 +296,27 @@ static void handle_wrq(int sockfd, struct tftpreq *request)
             if (rcv_len >= 4 && rcv_hdr->th_opcode == htons(DATA) && rcv_hdr->th_block == htons(block)) {
                 // write to localfile
                 write_len = rcv_len -4;
-                // TODO: here
+                if (fwrite(rcv_hdr->th_data, 1, write_len, fp) != write_len) {
+                    perror("fwrite");
+                    goto wrq_end;
+                }
+                if (write_len < BLOCK_SIZE) {
+                    last = 1;
+                }
             }
         } else if (ret == 0) {
-            // TIMEOUT: resend previous DATA
+            // TIMEOUT: resend previous ACK
             if (++resend > 5) {
-                printf("fail: select: wait for ACK timeout \n");
-                goto rrq_end;
+                printf("fail: select: wait for DATA timeout \n");
+                goto wrq_end;
             }
         } else {
             printf("error: select\n");
-            goto rrq_end;
+            goto wrq_end;
         }
     }
 
-rrq_end:
+wrq_end:
     if (fclose(fp) != 0) {
         printf("error: fclose\n");
         return;
